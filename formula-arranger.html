@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Formula Rearranger</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: 'Courier New', monospace;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh; margin: 0;
+  background: #f0f0eb; gap: 18px;
+}
+select, button {
+  font-family: inherit; font-size: .82rem;
+  padding: 6px 11px; border: 1px solid #bbb;
+  background: white; cursor: pointer;
+}
+button:hover { border-color: #444; }
+button:disabled { opacity: 0.35; cursor: default; border-color: #ccc; }
+.eq-wrap {
+  background: white; border: 2px solid #333;
+  padding: 30px 56px;
+  display: flex; align-items: center; gap: 40px;
+  min-height: 130px; min-width: 420px;
+}
+.side {
+  display: flex; flex-direction: column;
+  align-items: center; min-width: 100px;
+  padding: 10px 14px; border: 2px dashed transparent;
+  border-radius: 4px; transition: border-color .12s, background .12s;
+}
+.side.over { border-color: #888; background: #f6f6f2; }
+.fraction { display: flex; flex-direction: column; align-items: center; }
+.num-row, .den-row { display: flex; align-items: center; gap: 5px; min-height: 40px; padding: 2px 4px; }
+.frac-bar { width: 100%; height: 2px; background: #333; margin: 2px 0; }
+.add-row { display: flex; align-items: center; gap: 5px; min-height: 40px; }
+.term-wrap { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.term {
+  font-size: 1.5rem; padding: 5px 10px;
+  background: #ebebeb; border: 1px solid #ccc;
+  cursor: grab; user-select: none; border-radius: 2px;
+}
+.term:hover { background: #ddd; border-color: #888; }
+.term.dragging { opacity: 0.2; }
+
+/* Input + spinner row */
+.input-row {
+  display: flex; align-items: center; gap: 0;
+}
+.term-input {
+  width: 64px; font-family: 'Courier New', monospace;
+  font-size: .78rem; padding: 3px 5px;
+  border: 1px solid #ccc; border-right: none;
+  border-radius: 2px 0 0 2px;
+  text-align: center; background: #fafaf8;
+  outline: none; transition: border-color .15s, background .15s, color .15s;
+}
+.term-input:focus { border-color: #555; background: white; }
+.term-input.solved {
+  border-color: #2a7a2a; background: #efffef;
+  color: #1a5a1a; font-weight: bold;
+  animation: popIn .2s ease;
+}
+.spinner {
+  display: flex; flex-direction: column;
+  border: 1px solid #ccc; border-radius: 0 2px 2px 0;
+  overflow: hidden;
+}
+.spinner button {
+  font-family: inherit; font-size: .55rem;
+  padding: 0; width: 16px; height: 14px;
+  border: none; border-radius: 0;
+  background: #f0f0ec; cursor: pointer;
+  line-height: 1; display: flex; align-items: center; justify-content: center;
+  color: #555;
+}
+.spinner button:hover { background: #ddd; color: #222; }
+.spinner button:first-child { border-bottom: 1px solid #ccc; }
+.spinner.solved button { background: #efffef; border-color: #2a7a2a; color: #2a7a2a; }
+.spinner.solved button:hover { background: #d6f5d6; }
+
+.term-input.solved + .spinner { border-color: #2a7a2a; }
+
+@keyframes popIn { from { transform: scale(.85); opacity:.4; } to { transform: scale(1); opacity:1; } }
+.ghost { color: #bbb; font-size: 1.5rem; padding: 5px 10px; }
+.eq-sign { font-size: 1.9rem; color: #555; flex-shrink: 0; }
+.op { font-size: 1.3rem; color: #666; padding: 0 2px; }
+.hint { color: #aaa; font-size: .7rem; letter-spacing: 1px; }
+.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.status { font-size: .8rem; color: #888; letter-spacing: .5px; min-height: 22px; }
+.status.ok  { color: #2a7a2a; }
+.status.err { color: #cc3333; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <select id="sel"></select>
+  <button id="flip">⇄ FLIP</button>
+  <button id="invert">↕ INVERT</button>
+  <button id="reset">RESET</button>
+</div>
+
+<div class="eq-wrap" id="eq"></div>
+<div class="hint">drag tokens to rearrange · enter known values · unknowns appear automatically</div>
+<div class="status" id="status"></div>
+
+<script>
+const FORMULAS = [
+  { label:'F = ma',            type:'mul', L:{n:['F'],d:[]},       R:{n:['m','a'],d:[]}          },
+  { label:'E = mc²',           type:'mul', L:{n:['E'],d:[]},       R:{n:['m','c²'],d:[]}         },
+  { label:'PV = nRT',          type:'mul', L:{n:['P','V'],d:[]},   R:{n:['n','R','T'],d:[]}      },
+  { label:'S = k·lnΩ',        type:'mul', L:{n:['S'],d:[]},       R:{n:['k','lnΩ'],d:[]}        },
+  { label:'ρ = m/V',           type:'mul', L:{n:['ρ'],d:[]},       R:{n:['m'],d:['V']}           },
+  { label:'v = λf',            type:'mul', L:{n:['v'],d:[]},       R:{n:['λ','f'],d:[]}          },
+  { label:'γ = 1/√(1−v²/c²)', type:'mul', L:{n:['γ'],d:[]},       R:{n:['1'],d:['√(1−v²/c²)']} },
+  { label:'A² + B² = C²',      type:'add', L:[{s:'A²',p:1},{s:'B²',p:1}], R:[{s:'C²',p:1}]     },
+  { label:'sin²θ + cos²θ = 1', type:'add', L:[{s:'sin²θ',p:1},{s:'cos²θ',p:1}], R:[{s:'1',p:1}]},
+  { label:'E = KE + PE',       type:'add', L:[{s:'E',p:1}], R:[{s:'KE',p:1},{s:'PE',p:1}]       },
+];
+
+// Symbols that are fixed physical/mathematical constants — no input widget
+const CONSTANTS = new Set(['1','R','k','c²','lnΩ','√(1−v²/c²)','π','e']);
+
+let state, curIdx = 0, drag = null;
+let userValues = {};
+let autoValues = {};
+
+// Track which input is currently focused so render() can restore focus
+let focusedSym = null;
+
+const selEl = document.getElementById('sel');
+FORMULAS.forEach((f,i) => {
+  const o = document.createElement('option');
+  o.value = i; o.textContent = f.label; selEl.appendChild(o);
+});
+selEl.addEventListener('change', () => { curIdx = +selEl.value; load(); });
+document.getElementById('reset').addEventListener('click', load);
+
+document.getElementById('flip').addEventListener('click', () => {
+  [state.L, state.R] = [state.R, state.L]; render();
+});
+
+document.getElementById('invert').addEventListener('click', () => {
+  if (state.type !== 'mul') return;
+  [state.L.n, state.L.d] = [state.L.d, state.L.n];
+  [state.R.n, state.R.d] = [state.R.d, state.R.n];
+  if (state.L.n.length === 0) state.L.n = ['1'];
+  if (state.R.n.length === 0) state.R.n = ['1'];
+  simplifyMul(state.L); simplifyMul(state.R);
+  render();
+});
+
+load();
+
+function load() {
+  const f = FORMULAS[curIdx];
+  state = f.type === 'mul'
+    ? { type:'mul', L:{n:[...f.L.n],d:[...f.L.d]}, R:{n:[...f.R.n],d:[...f.R.d]} }
+    : { type:'add', L:f.L.map(t=>({...t})), R:f.R.map(t=>({...t})) };
+  userValues = {}; autoValues = {}; focusedSym = null;
+  render();
+}
+
+function allSymbols() {
+  const syms = new Set();
+  if (state.type === 'mul') {
+    [...state.L.n,...state.L.d,...state.R.n,...state.R.d].forEach(s => { if(!CONSTANTS.has(s)) syms.add(s); });
+  } else {
+    [...state.L,...state.R].forEach(t => { if(!CONSTANTS.has(t.s)) syms.add(t.s); });
+  }
+  return [...syms];
+}
+
+function getVal(sym) {
+  if (CONSTANTS.has(sym)) return 1; // constants are treated as opaque; user can't set them
+  if (userValues[sym] !== undefined) return userValues[sym];
+  if (autoValues[sym] !== undefined) return autoValues[sym];
+  return null;
+}
+
+function tryAutoSolve() {
+  autoValues = {};
+  const syms = allSymbols().filter(s => s !== '1');
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const u of syms) {
+      if (getVal(u) !== null) continue;
+      try {
+        const val = solveForClean(u);
+        if (isFinite(val)) { autoValues[u] = val; progress = true; }
+      } catch(e) {}
+    }
+  }
+}
+
+function solveForClean(u) {
+  if (state.type === 'mul') {
+    const crossN = [...state.L.n, ...state.R.d];
+    const crossD = [...state.R.n, ...state.L.d];
+    const prod = (arr, skip) => {
+      let skipped = false;
+      return arr.reduce((a, s) => {
+        if (!skipped && s === skip) { skipped = true; return a; }
+        const v = getVal(s);
+        if (v === null) throw new Error('unknown');
+        return a * v;
+      }, 1);
+    };
+    if (crossN.includes(u)) {
+      const denom = prod(crossN, u);
+      if (denom === 0) throw new Error('div0');
+      return prod(crossD, null) / denom;
+    }
+    if (crossD.includes(u)) {
+      const denom = prod(crossD, u);
+      if (denom === 0) throw new Error('div0');
+      return prod(crossN, null) / denom;
+    }
+    throw new Error('not found');
+  } else {
+    const all = [
+      ...state.L.map(t => ({s:t.s, p:t.p})),
+      ...state.R.map(t => ({s:t.s, p:-t.p})),
+    ];
+    const uTerm = all.find(t => t.s === u);
+    if (!uTerm) throw new Error('not found');
+    const rest = all.filter(t => t !== uTerm);
+    const restSum = rest.reduce((a, t) => {
+      const v = getVal(t.s);
+      if (v === null) throw new Error('unknown');
+      return a + t.p * v;
+    }, 0);
+    if (uTerm.p === 0) throw new Error('coeff 0');
+    return -restSum / uTerm.p;
+  }
+}
+
+function fmt(v) {
+  if (!isFinite(v)) return '∞';
+  if (Math.abs(v) >= 1e6 || (Math.abs(v) < 1e-3 && v !== 0)) return v.toExponential(4);
+  return +v.toPrecision(6) + '';
+}
+
+function evalSide(s) {
+  if (state.type === 'mul') {
+    const n = s.n.reduce((a,sym)=>{ const v=getVal(sym); if(v===null) throw 0; return a*v; },1);
+    const d = s.d.reduce((a,sym)=>{ const v=getVal(sym); if(v===null) throw 0; return a*v; },1);
+    if(d===0) throw 0; return n/d;
+  } else {
+    return s.reduce((a,t)=>{ const v=getVal(t.s); if(v===null) throw 0; return a+t.p*v; },0);
+  }
+}
+
+function updateStatus() {
+  const st = document.getElementById('status');
+  const syms = allSymbols().filter(s => s !== '1');
+  const unknowns = syms.filter(s => getVal(s) === null);
+  const solved = Object.keys(autoValues);
+
+  if (unknowns.length === 0 && syms.length > 0) {
+    try {
+      const lv = evalSide(state.L), rv = evalSide(state.R);
+      const ok = Math.abs(lv-rv) < 1e-9*(Math.abs(lv)+Math.abs(rv)+1e-12);
+      st.className = 'status '+(ok?'ok':'err');
+      st.textContent = ok ? `✓ verified — both sides = ${fmt(lv)}` : `✗ LHS = ${fmt(lv)}, RHS = ${fmt(rv)}`;
+    } catch(e) { st.className='status'; st.textContent=''; }
+  } else if (solved.length > 0) {
+    st.className = 'status ok';
+    st.textContent = '→ ' + solved.map(s=>`${s} = ${fmt(autoValues[s])}`).join('  ·  ');
+  } else {
+    st.className = 'status';
+    st.textContent = unknowns.length > 0 ? `${unknowns.length} unknown${unknowns.length>1?'s':''} — enter values below` : '';
+  }
+}
+
+function render() {
+  tryAutoSolve();
+  updateStatus();
+
+  document.getElementById('invert').disabled = state.type === 'add';
+
+  const eq = document.getElementById('eq');
+  eq.innerHTML = '';
+  if (state.type === 'mul') {
+    eq.appendChild(buildMulSide('L'));
+    eq.appendChild(eqSign());
+    eq.appendChild(buildMulSide('R'));
+  } else {
+    eq.appendChild(buildAddSide('L'));
+    eq.appendChild(eqSign());
+    eq.appendChild(buildAddSide('R'));
+  }
+
+  // Restore focus if a symbol was being edited
+  if (focusedSym) {
+    const inp = document.querySelector(`[data-sym="${CSS.escape(focusedSym)}"]`);
+    if (inp) {
+      inp.focus();
+      // Place cursor at end
+      const len = inp.value.length;
+      inp.setSelectionRange(len, len);
+    }
+  }
+}
+
+function eqSign() { const d=document.createElement('div'); d.className='eq-sign'; d.textContent='='; return d; }
+function ghost(t) { const d=document.createElement('div'); d.className='ghost'; d.textContent=t; return d; }
+function op(t)    { const s=document.createElement('span'); s.className='op'; s.textContent=t; return s; }
+
+function buildMulSide(side) {
+  const wrap=document.createElement('div'); wrap.className='side';
+  dropZone(wrap,side);
+  const d=state[side];
+  const numRow=document.createElement('div'); numRow.className='num-row';
+  (d.n.length===0?[null]:d.n).forEach((sym,i)=>{
+    if(sym===null){numRow.appendChild(ghost('1'));return;}
+    if(i>0) numRow.appendChild(op('·'));
+    numRow.appendChild(termWrap(sym,side,'n',i));
+  });
+  // Only show fraction layout if denominator has real (non-'1') terms
+  const realDen = d.d.filter(s => s !== '1');
+  if(realDen.length === 0){
+    wrap.appendChild(numRow);
+  } else {
+    const denRow=document.createElement('div'); denRow.className='den-row';
+    realDen.forEach((sym,i)=>{ if(i>0) denRow.appendChild(op('·')); denRow.appendChild(termWrap(sym,side,'d',d.d.indexOf(sym))); });
+    const bar=document.createElement('div'); bar.className='frac-bar';
+    const frac=document.createElement('div'); frac.className='fraction';
+    frac.appendChild(numRow); frac.appendChild(bar); frac.appendChild(denRow);
+    wrap.appendChild(frac);
+  }
+  return wrap;
+}
+
+function buildAddSide(side) {
+  const wrap=document.createElement('div'); wrap.className='side';
+  dropZone(wrap,side);
+  const row=document.createElement('div'); row.className='add-row';
+  const terms=state[side];
+  if(terms.length===0){row.appendChild(ghost('0'));}
+  else terms.forEach((t,i)=>{
+    if(i===0&&t.p===-1) row.appendChild(op('−'));
+    else if(i>0) row.appendChild(op(t.p===1?'+':'−'));
+    row.appendChild(termWrap(t.s,side,'add',i));
+  });
+  wrap.appendChild(row);
+  return wrap;
+}
+
+function commitValue(sym, raw) {
+  if (raw === '' || raw === '-' || raw === '.') {
+    delete userValues[sym];
+  } else {
+    const n = parseFloat(raw);
+    if (!isNaN(n)) userValues[sym] = n;
+    else delete userValues[sym];
+  }
+}
+
+function stepValue(sym, delta) {
+  const cur = userValues[sym] !== undefined ? userValues[sym]
+            : autoValues[sym] !== undefined ? autoValues[sym]
+            : 0;
+  // Round to avoid float drift, step by 1 (or 0.1 if decimal)
+  const next = Math.round((cur + delta) * 1e9) / 1e9;
+  userValues[sym] = next;
+  focusedSym = sym;
+  render();
+}
+
+function termWrap(sym, side, zone, idx) {
+  const wrap=document.createElement('div'); wrap.className='term-wrap';
+  const el=document.createElement('div');
+  el.className='term'; el.textContent=sym; el.draggable=true;
+  el.addEventListener('dragstart',e=>{ drag={sym,side,zone,idx}; e.dataTransfer.effectAllowed='move'; setTimeout(()=>el.classList.add('dragging'),0); });
+  el.addEventListener('dragend',()=>{ el.classList.remove('dragging'); drag=null; });
+
+  if (CONSTANTS.has(sym)) {
+    // Fixed constant — just the draggable tile, no input row
+    wrap.appendChild(el);
+    return wrap;
+  }
+
+  const isAuto = autoValues[sym] !== undefined;
+  const isUser = userValues[sym] !== undefined;
+
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'term-input' + (isAuto ? ' solved' : '');
+  inp.dataset.sym = sym;
+
+  if (isUser)       { inp.value = String(userValues[sym]); }
+  else if (isAuto)  { inp.value = fmt(autoValues[sym]); inp.readOnly = true; }
+  else              { inp.placeholder = '?'; }
+
+  if (!isAuto) {
+    inp.addEventListener('focus', () => { focusedSym = sym; });
+    inp.addEventListener('blur', () => {
+      focusedSym = null;
+      commitValue(sym, inp.value.trim());
+      render();
+    });
+    // Allow free typing — only commit on blur or Enter
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { inp.blur(); }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); stepValue(sym, 1); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); stepValue(sym, -1); }
+    });
+  }
+
+  const spinnerDiv = document.createElement('div');
+  spinnerDiv.className = 'spinner' + (isAuto ? ' solved' : '');
+
+  const btnUp = document.createElement('button');
+  btnUp.textContent = '▲';
+  btnUp.title = '+1';
+  btnUp.addEventListener('mousedown', e => { e.preventDefault(); stepValue(sym, 1); });
+
+  const btnDn = document.createElement('button');
+  btnDn.textContent = '▼';
+  btnDn.title = '−1';
+  btnDn.addEventListener('mousedown', e => { e.preventDefault(); stepValue(sym, -1); });
+
+  spinnerDiv.appendChild(btnUp);
+  spinnerDiv.appendChild(btnDn);
+
+  const row = document.createElement('div');
+  row.className = 'input-row';
+  row.appendChild(inp);
+  row.appendChild(spinnerDiv);
+
+  wrap.appendChild(el);
+  wrap.appendChild(row);
+  return wrap;
+}
+
+function dropZone(el,side){
+  el.addEventListener('dragover',e=>{ if(drag&&drag.side!==side){e.preventDefault();el.classList.add('over');} });
+  el.addEventListener('dragleave',()=>el.classList.remove('over'));
+  el.addEventListener('drop',e=>{ e.preventDefault();el.classList.remove('over'); if(!drag||drag.side===side)return; applyAlgebra(drag,side); drag=null; });
+}
+
+function applyAlgebra(d,toSide){
+  const src=state[d.side],dest=state[toSide];
+  if(state.type==='mul'){
+    if(d.zone==='n'){const i=src.n.indexOf(d.sym);if(i===-1)return;src.n.splice(i,1);dest.d.push(d.sym);}
+    else            {const i=src.d.indexOf(d.sym);if(i===-1)return;src.d.splice(i,1);dest.n.push(d.sym);}
+    simplifyMul(state.L); simplifyMul(state.R);
+  } else {
+    const t=src.splice(d.idx,1)[0];
+    dest.push({s:t.s,p:-t.p});
+    state.L.sort((a,b)=>b.p-a.p); state.R.sort((a,b)=>b.p-a.p);
+  }
+  render();
+}
+
+function simplifyMul(side){
+  for(let i=side.d.length-1;i>=0;i--){ const ni=side.n.indexOf(side.d[i]); if(ni!==-1){side.d.splice(i,1);side.n.splice(ni,1);} }
+  let j; while(side.n.length>1&&(j=side.n.indexOf('1'))!==-1) side.n.splice(j,1);
+}
+</script>
+</body>
+</html>
