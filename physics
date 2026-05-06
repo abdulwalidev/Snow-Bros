@@ -1,3 +1,3 @@
-right so functionily: moveY applies gravity AND moves, but gravity is applied separately before moveY in some cases - double gravity issue. Actually looking
+so the right so functionily: moveY applies gravity AND moves, but gravity is applied separately before moveY in some cases - double gravity issue. Actually looking
 
 classes
